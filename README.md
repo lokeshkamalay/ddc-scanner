@@ -24,6 +24,8 @@ python app.py --vendor hos --pdf laxmi-invoices/
 python app.py --vendor balaji --pdf Invoice_23832_from_BALAJI_WHOLESALE_FOODS_LLC.pdf
 # Multiple Balaji invoices (only Balaji-format PDFs in this folder):
 python app.py --vendor balaji --pdf balaji-invoices/
+# Champs delivery slips:
+python app.py --vendor champs --pdf champs.pdf
 # For either vendor, you can also list PDFs explicitly (quote filenames with spaces):
 python app.py --vendor balaji --pdf "balaji-1.pdf" "balaji-2.pdf" "balaji-3.pdf" "balaji-4.pdf"
 ```
@@ -39,7 +41,7 @@ Options:
 | Flag / env var        | Default       | Purpose                        |
 | --------------------- | ------------- | ------------------------------ |
 | `--pdf` / `INVOICE_PDF` | `Laxmi1.pdf` | One or more PDFs, or a folder of vendor-specific PDFs (`INVOICE_PDF` accepts one path) |
-| `--vendor` / `INVOICE_VENDOR` | `hos` | Invoice layout: `hos` or `balaji` |
+| `--vendor` / `INVOICE_VENDOR` | `hos` | Invoice layout: `hos`, `balaji` or `champs` |
 | `--host` / `HOST`     | `127.0.0.1`   | Bind address                   |
 | `--port` / `PORT`     | `5000`        | Port                           |
 
@@ -59,6 +61,12 @@ item code (e.g. `1CHK5`).
 The Balaji PDF has some products with no printed SKU/barcode number; those rows
 can still be found by activity/item code or product name. `zeenat` is reserved
 but not parsed yet: a sample Zeenat invoice is needed to map its columns.
+
+Champs is a delivery slip, not a price invoice. Type an item number (such as `21`),
+vendor item code (such as `ALST-80`), or part of its description to see its full
+printed row, including quantity, delivery and pending counts. Champs does not print
+barcodes or prices, so those fields are not shown. Repeated rows at page breaks are
+shown once, using the later copy.
 
 ## API
 

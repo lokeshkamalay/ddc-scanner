@@ -85,7 +85,7 @@ def main() -> None:
     cli.add_argument("--pdf", nargs="+", default=[os.environ.get("INVOICE_PDF", "Laxmi1.pdf")],
                      help="One or more PDFs, or a folder containing PDFs for the selected vendor")
     cli.add_argument("--vendor", default=os.environ.get("INVOICE_VENDOR", "hos"),
-                     choices=("hos", "balaji", "zeenat"), help="Invoice layout (Zeenat needs a sample PDF)")
+                     choices=("hos", "balaji", "champs", "zeenat"), help="Invoice layout (Zeenat needs a sample PDF)")
     cli.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     cli.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5000")))
     args = cli.parse_args()

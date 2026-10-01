@@ -1,4 +1,4 @@
-"""Parse House of Spices and Balaji invoices into searchable line items.
+"""Parse vendor invoices and delivery slips into searchable line items.
 
 The invoice table uses fixed column bands (x positions on the page):
 
@@ -71,6 +71,12 @@ class LineItem:
     invoice_no: str = ""
     invoice_date: str = ""
     source_pdf: str = ""
+    raw_line: str = ""
+    vendor: str = ""
+    unit: str = ""
+    quantity: str = ""
+    pending: str = ""
+    delivery_date: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -263,6 +269,50 @@ def _parse_balaji_page(page: Any, page_number: int) -> Iterator[LineItem]:
         yield _finalize(current, "", "")
 
 
+def _parse_champs_page(page: Any, page_number: int) -> Iterator[LineItem]:
+    in_table = False
+    current: LineItem | None = None
+    for line in _group_lines(page.extract_words()):
+        words = [word["text"] for word in line]
+        if "Vendor" in words and "Quantity" in words and "Pending" in words:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if "Total:" in words:
+            break
+
+        number = next((word["text"] for word in line if 34 <= word["x0"] < 60), "")
+        code = next((word["text"] for word in line if 130 <= word["x0"] < 215), "")
+        if number.isdigit() and code:
+            if current is not None:
+                yield current
+            vendor = " ".join(word["text"] for word in line if 60 <= word["x0"] < 130)
+            unit = " ".join(word["text"] for word in line if 215 <= word["x0"] < 244)
+            details = " ".join(word["text"] for word in line if 244 <= word["x0"] < 388)
+            quantity = next((word["text"] for word in line if 388 <= word["x0"] < 440), "")
+            delivery = next((word["text"] for word in line if 440 <= word["x0"] < 490), "")
+            pending = next((word["text"] for word in line if 490 <= word["x0"] < 519), "")
+            delivery_date = next((word["text"] for word in line if word["x0"] >= 519 and re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", word["text"])), "")
+            current = LineItem(
+                sn=number, item_code=code, description=details,
+                upc="", barcode="", shipped=delivery, price="", amount="",
+                page=page_number, raw_line=" ".join(words), vendor=vendor, unit=unit,
+                quantity=quantity, pending=pending, delivery_date=delivery_date,
+            )
+            continue
+        if current is not None and all(210 <= word["x0"] < 290 for word in line):
+            continuation = " ".join(words)
+            if all(210 <= word["x0"] < 244 for word in line):
+                current.unit = f"{current.unit} {continuation}".strip()
+            else:
+                current.description = f"{current.description} {continuation}".strip()
+            current.raw_line += f"\n{continuation}"
+
+    if current is not None:
+        yield current
+
+
 def parse_invoice(pdf_path: str | Path, vendor: str = "hos") -> list[LineItem]:
     """Parse every line item using the selected vendor's PDF layout.
 
@@ -275,8 +325,8 @@ def parse_invoice(pdf_path: str | Path, vendor: str = "hos") -> list[LineItem]:
         raise FileNotFoundError(f"Invoice PDF not found: {path}")
     if vendor == "zeenat":
         raise ValueError("Zeenat invoice format is not supported yet; provide a sample PDF to add it.")
-    if vendor not in ("hos", "balaji"):
-        raise ValueError(f"Unknown vendor: {vendor}. Use hos or balaji.")
+    if vendor not in ("hos", "balaji", "champs"):
+        raise ValueError(f"Unknown vendor: {vendor}. Use hos, balaji or champs.")
 
     try:
         import pdfplumber  # imported lazily so the module can be introspected without the dep
@@ -284,13 +334,19 @@ def parse_invoice(pdf_path: str | Path, vendor: str = "hos") -> list[LineItem]:
         raise RuntimeError("pdfplumber is required. Install it with: pip install pdfplumber") from exc
 
     items: list[LineItem] = []
-    parse_page = _parse_page if vendor == "hos" else _parse_balaji_page
+    parse_page = {"hos": _parse_page, "balaji": _parse_balaji_page, "champs": _parse_champs_page}[vendor]
+    champs_positions: dict[str, int] = {}
     with pdfplumber.open(str(path)) as pdf:
         for page_number, page in enumerate(pdf.pages, start=1):
             try:
                 for item in parse_page(page, page_number):
                     if vendor == "balaji":
                         item.sn = str(len(items) + 1)
+                    if vendor == "champs":
+                        if item.sn in champs_positions:
+                            items[champs_positions[item.sn]] = item
+                            continue
+                        champs_positions[item.sn] = len(items)
                     items.append(item)
             except Exception:  # keep parsing remaining pages if one page is malformed
                 logger.exception("Failed to parse page %s of %s", page_number, path.name)
@@ -308,7 +364,7 @@ class InvoiceIndex:
         self.source = source
         self._by_key: dict[str, list[LineItem]] = defaultdict(list)
         for item in items:
-            keys = {self._normalize(k) for k in (item.barcode, item.upc, item.item_code) if k}
+            keys = {self._normalize(k) for k in (item.barcode, item.upc, item.item_code, item.sn if item.raw_line else "") if k}
             for key in filter(None, keys):
                 self._by_key[key].append(item)
 
@@ -338,9 +394,11 @@ class InvoiceIndex:
             item
             for item in self.items
             if needle in item.description.upper()
+            or needle in item.vendor.upper()
             or needle in item.item_code.upper()
             or needle in item.barcode
             or needle in item.upc
+            or needle in item.raw_line.upper()
         ]
         return results[:limit]
 
@@ -384,6 +442,6 @@ if __name__ == "__main__":  # pragma: no cover - manual inspection helper
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cli = argparse.ArgumentParser(description="Dump invoice line items as JSON.")
     cli.add_argument("pdf", help="Path to the invoice PDF")
-    cli.add_argument("--vendor", default="hos", choices=("hos", "balaji", "zeenat"))
+    cli.add_argument("--vendor", default="hos", choices=("hos", "balaji", "champs", "zeenat"))
     args = cli.parse_args()
     print(load_index(args.pdf, vendor=args.vendor).to_json())

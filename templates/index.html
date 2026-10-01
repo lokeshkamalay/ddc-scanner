@@ -21,6 +21,7 @@
   .card { background:var(--card); border-radius:12px; padding:16px 18px; margin-bottom:14px; box-shadow:0 2px 10px rgba(0,0,0,.06); border-left:6px solid var(--accent); }
   .card.warn { border-left-color:#e08c00; }
   .card h2 { margin:0 0 4px; font-size:18px; }
+  .raw-line { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.6; margin:12px 0; }
   .highlights { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:14px 0; }
   .highlight { background:#e7f1fd; border-left:3px solid var(--accent); padding:10px 12px; min-width:0; }
   .highlight span { display:block; color:var(--muted); font-size:12px; font-weight:600; }
@@ -40,7 +41,7 @@
 </header>
 <main>
   <section class="scan">
-    <label for="code">Scan barcode / type item code or product name</label>
+    <label for="code">Scan barcode / type item number, item code or product name</label>
     <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan now&hellip;" autofocus>
     <div class="hint">The box stays focused automatically. Press <b>Enter</b> to search, <b>Esc</b> to clear.</div>
   </section>
@@ -59,6 +60,25 @@ function row(k, v) {
 }
 
 function card(item, warn) {
+  if (item.raw_line) {
+    return `<div class="card ${warn ? 'warn' : ''}">
+      <h2>Item ${esc(item.sn)} &mdash; ${esc(item.item_code)}</h2>
+      <table>
+        ${row('Item #', item.sn)}
+        ${row('Vendor', item.vendor)}
+        ${row('Vendor Item #', item.item_code)}
+        ${row('Unit', item.unit)}
+        ${row('Description', item.description)}
+        ${row('Quantity', item.quantity)}
+        ${row('Delivery', item.shipped)}
+        ${row('Pending', item.pending)}
+        ${row('Delivery Date', item.delivery_date || 'Not provided')}
+        ${row('Source file', item.source_pdf)}
+      </table>
+      <p class="hint">Full line</p>
+      <div class="raw-line">${esc(item.raw_line)}</div>
+    </div>`;
+  }
   const qty = item.pack_size_text || 'Not specified';
   return `<div class="card ${warn ? 'warn' : ''}">
     <h2>${esc(item.item_code)} &mdash; ${esc(item.description)}</h2>
@@ -93,7 +113,7 @@ async function search(code) {
     const warn = data.match_type !== 'exact';
     statusEl.textContent = warn
       ? `${data.count} text match(es) for "${code}" (no exact barcode hit)`
-      : `${data.count} match(es) for barcode ${code}`;
+      : `${data.count} exact ${data.count === 1 ? 'match' : 'matches'} for ${code}`;
     resultsEl.innerHTML = data.results.map(i => card(i, warn)).join('');
   } catch (e) {
     statusEl.innerHTML = '<span class="err">Network error &mdash; is the server running?</span>';

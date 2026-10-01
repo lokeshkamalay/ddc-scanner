@@ -11,6 +11,7 @@ from invoice_parser import InvoiceIndex, LineItem, PackSize, parse_pack_size
 
 PDF = Path(__file__).parent / "Laxmi1.pdf"
 BALAJI_PDF = Path(__file__).parent / "Invoice_23832_from_BALAJI_WHOLESALE_FOODS_LLC.pdf"
+CHAMPS_PDF = Path(__file__).parent / "champs.pdf"
 
 
 def make_item(**kw) -> LineItem:
@@ -234,3 +235,30 @@ def test_empty_invoice_folder_fails_clearly(tmp_path):
 
     with pytest.raises(ValueError, match="No PDF files found"):
         load_index(tmp_path, vendor="balaji")
+
+
+@pytest.mark.skipif(not CHAMPS_PDF.is_file(), reason="Champs delivery slip not available")
+def test_champs_lookup_preserves_printed_row():
+    from invoice_parser import load_index
+
+    index = load_index(CHAMPS_PDF, vendor="champs")
+    assert len(index.items) == 171
+    item = index.lookup("21")[0]
+    assert index.lookup("ALST-80") == [item]
+    assert item.raw_line == "21 Winco ALST-80 Stock Pot 2 0 2\nEach"
+    assert (item.vendor, item.unit, item.description) == ("Winco", "Each", "Stock Pot")
+    assert (item.quantity, item.shipped, item.pending, item.delivery_date) == ("2", "0", "2", "")
+    assert item.price == ""
+    assert index.lookup("33")[0].raw_line.endswith("09/30/26")
+    assert index.lookup("33")[0].delivery_date == "09/30/26"
+    assert any(hit.sn == "21" for hit in index.search("Stock Pot"))
+
+
+@pytest.mark.skipif(not CHAMPS_PDF.is_file(), reason="Champs delivery slip not available")
+def test_champs_api_returns_full_line_without_price():
+    client = app_module.create_app(CHAMPS_PDF, vendor="champs").test_client()
+    response = client.get("/api/lookup?code=ALST-80").get_json()
+    assert response["count"] == 1
+    assert response["results"][0]["raw_line"] == "21 Winco ALST-80 Stock Pot 2 0 2\nEach"
+    assert response["results"][0]["pending"] == "2"
+    assert response["results"][0]["source_pdf"] == "champs.pdf"
