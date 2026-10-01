@@ -21,7 +21,11 @@
   .card { background:var(--card); border-radius:12px; padding:16px 18px; margin-bottom:14px; box-shadow:0 2px 10px rgba(0,0,0,.06); border-left:6px solid var(--accent); }
   .card.warn { border-left-color:#e08c00; }
   .card h2 { margin:0 0 4px; font-size:18px; }
-  .qty { display:inline-block; background:#e7f1fd; color:var(--accent); font-weight:700; padding:4px 10px; border-radius:20px; font-size:13px; margin-bottom:10px; }
+  .highlights { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:14px 0; }
+  .highlight { background:#e7f1fd; border-left:3px solid var(--accent); padding:10px 12px; min-width:0; }
+  .highlight span { display:block; color:var(--muted); font-size:12px; font-weight:600; }
+  .highlight strong { display:block; color:#134b82; font-size:18px; overflow-wrap:anywhere; }
+  @media (max-width:600px) { .highlights { grid-template-columns:1fr; } }
   table { width:100%; border-collapse:collapse; font-size:14px; }
   td { padding:6px 0; border-bottom:1px solid #eef1f5; vertical-align:top; }
   td.k { color:var(--muted); width:150px; font-weight:600; }
@@ -55,24 +59,21 @@ function row(k, v) {
 }
 
 function card(item, warn) {
-  const qty = item.pack_size_text
-    ? `<div class="qty">Qty: ${esc(item.pack_size_text)} &nbsp;=&nbsp; ${esc(item.total_units)} ${esc(item.pack_size.unit)} per case</div>`
-    : '';
+  const qty = item.pack_size_text || 'Not specified';
   return `<div class="card ${warn ? 'warn' : ''}">
     <h2>${esc(item.item_code)} &mdash; ${esc(item.description)}</h2>
-    ${qty}
+    <div class="highlights">
+      <div class="highlight"><span>Price</span><strong>${esc(item.price)}</strong></div>
+      <div class="highlight"><span>Shipped</span><strong>${esc(item.shipped)}</strong></div>
+      <div class="highlight"><span>Quantity per case</span><strong>${esc(qty)}</strong></div>
+    </div>
     <table>
       ${row('SN', item.sn)}
       ${row('Item code', item.item_code)}
       ${row('Description', item.description)}
       ${row('UPC', item.upc)}
       ${row('Barcode', item.barcode)}
-      ${row('Shipped', item.shipped)}
-      ${row('Price', item.price)}
       ${row('Amount', item.amount)}
-      ${row('Invoice', item.invoice_no)}
-      ${row('Invoice date', item.invoice_date)}
-      ${row('PDF page', item.page)}
     </table>
   </div>`;
 }
