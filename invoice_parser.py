@@ -1,13 +1,11 @@
-"""Parse House of Spices style invoice PDFs into structured, searchable line items.
+"""Parse House of Spices and Balaji invoices into searchable line items.
 
 The invoice table uses fixed column bands (x positions on the page):
 
     SN | ITEM | DESCRIPTION | UPC | BARCODE | SHIPPED | PRICE | AMOUNT
 
-A single logical row is spread over several physical text lines: the description
-may wrap above/below the row that carries the SN, and the UPC/barcode always sit
-on their own lines. The parser therefore groups words into lines, classifies each
-word by its x position, and stitches the lines back into one record per SN.
+Vendor-specific page parsers handle their own column positions and wrapped text;
+both produce the same LineItem fields for the scanner UI.
 """
 
 from __future__ import annotations
@@ -34,8 +32,10 @@ COL_AMOUNT = (520.0, 1000.0)
 
 # "10X800 GM", "20X2 LB", "6X1.2 KG", "24 X 400 GM"
 _PACK_RE = re.compile(
-    r"(?P<packs>\d+)\s*[xX]\s*(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>KG|GM|GMS|G|LB|LBS|OZ|ML|LTR|L|PCS|PC)\b"
+    r"(?P<packs>\d+)\s*[xX*]\s*(?P<size>\d+(?:\.\d+)?)\s*(?P<unit>KG|GMS|GM|LBS|LB|OZ|ML|LTR|PCS|PC|G|L)\b",
+    re.I,
 )
+_UNIT_LESS_PACK_RE = re.compile(r"(?P<packs>\d+)\s*[xX*]\s*(?P<size>\d+(?:\.\d+)?)\s*$", re.I)
 _DIGITS_RE = re.compile(r"\d{8,14}")
 _MONEY_RE = re.compile(r"^\d[\d,]*\.\d{2}$")
 
@@ -51,7 +51,7 @@ class PackSize:
     @property
     def text(self) -> str:
         size = int(self.size) if float(self.size).is_integer() else self.size
-        return f"{self.packs} x {size} {self.unit}"
+        return f"{self.packs} x {size} {self.unit}".strip()
 
 
 @dataclass
@@ -115,7 +115,10 @@ def parse_pack_size(description: str) -> PackSize | None:
     """Extract the pack breakdown (count x size + unit) from a description."""
     match = _PACK_RE.search(description.replace("(", " ").replace(")", " "))
     if not match:
-        return None
+        unitless = _UNIT_LESS_PACK_RE.search(description)
+        if not unitless:
+            return None
+        return PackSize(packs=int(unitless.group("packs")), size=float(unitless.group("size")), unit="")
     unit = match.group("unit").upper()
     unit = {"GMS": "GM", "G": "GM", "LBS": "LB", "PC": "PCS"}.get(unit, unit)
     return PackSize(packs=int(match.group("packs")), size=float(match.group("size")), unit=unit)
@@ -217,8 +220,50 @@ def _parse_page(page: Any, page_number: int) -> Iterator[LineItem]:
             yield finished
 
 
-def parse_invoice(pdf_path: str | Path) -> list[LineItem]:
-    """Parse every line item from the invoice PDF.
+def _parse_balaji_page(page: Any, page_number: int) -> Iterator[LineItem]:
+    current: _Row | None = None
+    in_table = False
+    for line in _group_lines(page.extract_words()):
+        words = [word["text"] for word in line]
+        if "ACTIVITY" in words and "SKU/BARCODE" in words:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if "Freight" in words or "TOTAL" in words or "PAYMENT" in words:
+            break
+
+        activity = [word["text"] for word in line if 45 <= word["x0"] < 120]
+        code = activity[0] if activity else ""
+        is_item = bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*\d+[A-Za-z0-9-]*", code))
+        if is_item:
+            if current is not None:
+                yield _finalize(current, "", "")
+            barcode_words = [word["text"] for word in line if 120 <= word["x0"] < 248]
+            barcode = next((value for value in barcode_words if _DIGITS_RE.fullmatch(value)), "")
+            quantity = [word["text"] for word in line if 437 <= word["x0"] < 475]
+            rate = [word["text"] for word in line if 475 <= word["x0"] < 520]
+            amount = [word["text"] for word in line if word["x0"] >= 520]
+            current = _Row(
+                item_code=code,
+                page=page_number,
+                barcode=barcode,
+                upc=barcode,
+                shipped=quantity[0] if quantity else "",
+                price=rate[0] if rate else "",
+                amount=amount[0] if amount else "",
+            )
+        if current is not None:
+            description = " ".join(word["text"] for word in line if 248 <= word["x0"] < 437)
+            if description:
+                current.desc_parts.append(description)
+
+    if current is not None:
+        yield _finalize(current, "", "")
+
+
+def parse_invoice(pdf_path: str | Path, vendor: str = "hos") -> list[LineItem]:
+    """Parse every line item using the selected vendor's PDF layout.
 
     Raises:
         FileNotFoundError: if the PDF does not exist.
@@ -227,6 +272,10 @@ def parse_invoice(pdf_path: str | Path) -> list[LineItem]:
     path = Path(pdf_path)
     if not path.is_file():
         raise FileNotFoundError(f"Invoice PDF not found: {path}")
+    if vendor == "zeenat":
+        raise ValueError("Zeenat invoice format is not supported yet; provide a sample PDF to add it.")
+    if vendor not in ("hos", "balaji"):
+        raise ValueError(f"Unknown vendor: {vendor}. Use hos or balaji.")
 
     try:
         import pdfplumber  # imported lazily so the module can be introspected without the dep
@@ -234,12 +283,18 @@ def parse_invoice(pdf_path: str | Path) -> list[LineItem]:
         raise RuntimeError("pdfplumber is required. Install it with: pip install pdfplumber") from exc
 
     items: list[LineItem] = []
+    parse_page = _parse_page if vendor == "hos" else _parse_balaji_page
     with pdfplumber.open(str(path)) as pdf:
         for page_number, page in enumerate(pdf.pages, start=1):
             try:
-                items.extend(_parse_page(page, page_number))
+                for item in parse_page(page, page_number):
+                    if vendor == "balaji":
+                        item.sn = str(len(items) + 1)
+                    items.append(item)
             except Exception:  # keep parsing remaining pages if one page is malformed
                 logger.exception("Failed to parse page %s of %s", page_number, path.name)
+    if not items:
+        raise ValueError(f"No line items found in {path.name} for vendor {vendor}; check the vendor and PDF layout.")
     logger.info("Parsed %s line items from %s", len(items), path.name)
     return items
 
@@ -292,9 +347,9 @@ class InvoiceIndex:
         return json.dumps([item.to_dict() for item in self.items], indent=2)
 
 
-def load_index(pdf_path: str | Path) -> InvoiceIndex:
+def load_index(pdf_path: str | Path, vendor: str = "hos") -> InvoiceIndex:
     """Parse the PDF and return a ready-to-query index."""
-    return InvoiceIndex(parse_invoice(pdf_path), source=Path(pdf_path).name)
+    return InvoiceIndex(parse_invoice(pdf_path, vendor=vendor), source=Path(pdf_path).name)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual inspection helper
@@ -303,5 +358,6 @@ if __name__ == "__main__":  # pragma: no cover - manual inspection helper
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cli = argparse.ArgumentParser(description="Dump invoice line items as JSON.")
     cli.add_argument("pdf", help="Path to the invoice PDF")
+    cli.add_argument("--vendor", default="hos", choices=("hos", "balaji", "zeenat"))
     args = cli.parse_args()
-    print(load_index(args.pdf).to_json())
+    print(load_index(args.pdf, vendor=args.vendor).to_json())

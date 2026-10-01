@@ -15,7 +15,9 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python app.py --pdf Laxmi1.pdf
+python app.py --vendor hos --pdf Laxmi1.pdf
+# Or, for the Balaji invoice:
+python app.py --vendor balaji --pdf Invoice_23832_from_BALAJI_WHOLESALE_FOODS_LLC.pdf
 ```
 
 Open <http://127.0.0.1:5000> and scan.
@@ -25,6 +27,7 @@ Options:
 | Flag / env var        | Default       | Purpose                        |
 | --------------------- | ------------- | ------------------------------ |
 | `--pdf` / `INVOICE_PDF` | `Laxmi1.pdf` | Invoice PDF to index           |
+| `--vendor` / `INVOICE_VENDOR` | `hos` | Invoice layout: `hos` or `balaji` |
 | `--host` / `HOST`     | `127.0.0.1`   | Bind address                   |
 | `--port` / `PORT`     | `5000`        | Port                           |
 
@@ -40,6 +43,10 @@ the result appears. No driver or scanner configuration is needed.
 If the scanned code is not on the invoice, the app falls back to a free-text
 search so you can also type part of a product name (e.g. `kashmiri chili`) or an
 item code (e.g. `1CHK5`).
+
+The Balaji PDF has some products with no printed SKU/barcode number; those rows
+can still be found by activity/item code or product name. `zeenat` is reserved
+but not parsed yet: a sample Zeenat invoice is needed to map its columns.
 
 ## API
 
@@ -83,7 +90,8 @@ curl "http://127.0.0.1:5000/api/lookup?code=723246293356"
 ## Dumping the invoice as JSON
 
 ```bash
-python invoice_parser.py Laxmi1.pdf > items.json
+python invoice_parser.py Laxmi1.pdf --vendor hos > items.json
+python invoice_parser.py Invoice_23832_from_BALAJI_WHOLESALE_FOODS_LLC.pdf --vendor balaji > balaji-items.json
 ```
 
 ## Tests
@@ -102,8 +110,8 @@ classifies each word by its x coordinate, and stitches the lines into one record
 per SN. Rows without a barcode and a valid price (address blocks, page footers)
 are discarded.
 
-If a different vendor's invoice uses a different layout, adjust the `COL_*`
-column bands at the top of [invoice_parser.py](invoice_parser.py).
+Each vendor has a separate page parser in [invoice_parser.py](invoice_parser.py).
+New invoice layouts require a sample PDF and a vendor-specific parser.
 
 ## Notes
 

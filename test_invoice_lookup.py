@@ -10,6 +10,7 @@ import app as app_module
 from invoice_parser import InvoiceIndex, LineItem, PackSize, parse_pack_size
 
 PDF = Path(__file__).parent / "Laxmi1.pdf"
+BALAJI_PDF = Path(__file__).parent / "Invoice_23832_from_BALAJI_WHOLESALE_FOODS_LLC.pdf"
 
 
 def make_item(**kw) -> LineItem:
@@ -51,6 +52,10 @@ class TestParsePackSize:
     def test_text_property_drops_trailing_zero(self):
         assert PackSize(10, 800.0, "GM").text == "10 x 800 GM"
         assert PackSize(6, 1.2, "KG").text == "6 x 1.2 KG"
+
+    def test_unitless_pack_without_guessing_a_unit(self):
+        assert parse_pack_size("Gopuram Wick 12 * 1").text == "12 x 1"
+        assert parse_pack_size("Adani Potato 20 * 1 400 gms") is None
 
 
 class TestInvoiceIndex:
@@ -155,3 +160,48 @@ class TestApi:
     def test_lookup_unknown_code(self, client):
         payload = client.get("/api/lookup?code=000000000001").get_json()
         assert payload["match_type"] == "none" and payload["count"] == 0
+
+
+@pytest.mark.skipif(not BALAJI_PDF.is_file(), reason="Balaji sample invoice not available")
+def test_balaji_first_row():
+    from invoice_parser import load_index
+
+    index = load_index(BALAJI_PDF, vendor="balaji")
+    item = index.lookup("8904147414275")[0]
+    assert item.item_code == "asri004"
+    assert item.shipped == "2"
+    assert item.price == "48.00"
+    assert item.amount == "96.00"
+    assert item.pack_size is not None
+    assert item.pack_size.text == "10 x 4 LB"
+
+
+@pytest.mark.skipif(not BALAJI_PDF.is_file(), reason="Balaji sample invoice not available")
+def test_balaji_wrapped_rows_and_footer():
+    from invoice_parser import load_index
+
+    index = load_index(BALAJI_PDF, vendor="balaji")
+    assert index.lookup("wbt500")[0].price == "108.00"
+    assert index.lookup("asr800")[0].pack_size.text == "20 x 800 GM"
+    assert index.lookup("asr800")[0].barcode == ""
+    assert index.lookup("gwfdy012")[0].pack_size.text == "12 x 1"
+    assert "Freight" not in index.items[-1].description
+    assert index.items[-1].item_code == "psaio001"
+
+
+@pytest.mark.skipif(not BALAJI_PDF.is_file(), reason="Balaji sample invoice not available")
+def test_balaji_api_lookup():
+    flask_app = app_module.create_app(BALAJI_PDF, vendor="balaji")
+    flask_app.config["TESTING"] = True
+    response = flask_app.test_client().get("/api/lookup?code=8904147414275")
+    item = response.get_json()["results"][0]
+    assert item["price"] == "48.00"
+    assert item["shipped"] == "2"
+    assert item["pack_size_text"] == "10 x 4 LB"
+
+
+def test_unsupported_vendor_requires_sample():
+    from invoice_parser import load_index
+
+    with pytest.raises(ValueError, match="provide a sample PDF"):
+        load_index(PDF, vendor="zeenat")
