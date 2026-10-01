@@ -70,6 +70,7 @@ class LineItem:
     pack_size: PackSize | None = None
     invoice_no: str = ""
     invoice_date: str = ""
+    source_pdf: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -347,9 +348,34 @@ class InvoiceIndex:
         return json.dumps([item.to_dict() for item in self.items], indent=2)
 
 
-def load_index(pdf_path: str | Path, vendor: str = "hos") -> InvoiceIndex:
-    """Parse the PDF and return a ready-to-query index."""
-    return InvoiceIndex(parse_invoice(pdf_path, vendor=vendor), source=Path(pdf_path).name)
+def load_index(pdf_path: str | Path | Iterable[str | Path], vendor: str = "hos") -> InvoiceIndex:
+    """Index one or more invoices of the same vendor, including PDFs in a folder."""
+    inputs = [pdf_path] if isinstance(pdf_path, (str, Path)) else list(pdf_path)
+    paths: list[Path] = []
+    for entry in inputs:
+        path = Path(entry)
+        if path.is_dir():
+            matches = sorted((child for child in path.iterdir() if child.is_file() and child.suffix.lower() == ".pdf"))
+            if not matches:
+                raise ValueError(f"No PDF files found in {path}")
+            paths.extend(matches)
+        else:
+            paths.append(path)
+    if not paths:
+        raise ValueError("Provide at least one invoice PDF or a folder containing PDFs")
+
+    items: list[LineItem] = []
+    seen: set[Path] = set()
+    for path in paths:
+        if path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        parsed = parse_invoice(path, vendor=vendor)
+        for item in parsed:
+            item.source_pdf = path.name
+        items.extend(parsed)
+    source = paths[0].name if len(seen) == 1 else f"{len(seen)} PDFs"
+    return InvoiceIndex(items, source=source)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual inspection helper

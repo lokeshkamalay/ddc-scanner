@@ -205,3 +205,32 @@ def test_unsupported_vendor_requires_sample():
 
     with pytest.raises(ValueError, match="provide a sample PDF"):
         load_index(PDF, vendor="zeenat")
+
+
+def test_multiple_invoices_preserve_distinct_results(tmp_path, monkeypatch):
+    from invoice_parser import load_index
+
+    first = tmp_path / "balaji-1.pdf"
+    second = tmp_path / "balaji-2.pdf"
+    first.touch()
+    second.touch()
+
+    def fake_parse(path, vendor):
+        assert vendor == "balaji"
+        return [make_item(price="48.00" if Path(path) == first else "52.00")]
+
+    monkeypatch.setattr("invoice_parser.parse_invoice", fake_parse)
+    client = app_module.create_app(tmp_path, vendor="balaji").test_client()
+    response = client.get("/api/lookup?code=723246111111").get_json()
+    assert response["count"] == 2
+    assert [(item["source_pdf"], item["price"]) for item in response["results"]] == [
+        ("balaji-1.pdf", "48.00"), ("balaji-2.pdf", "52.00")
+    ]
+    assert load_index([first, first, second], vendor="balaji").source == "2 PDFs"
+
+
+def test_empty_invoice_folder_fails_clearly(tmp_path):
+    from invoice_parser import load_index
+
+    with pytest.raises(ValueError, match="No PDF files found"):
+        load_index(tmp_path, vendor="balaji")

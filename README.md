@@ -15,18 +15,30 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
+# One Laxmi/HOS invoice:
 python app.py --vendor hos --pdf Laxmi1.pdf
-# Or, for the Balaji invoice:
+# Multiple Laxmi/HOS invoices (only HOS-format PDFs in this folder):
+python app.py --vendor hos --pdf laxmi-invoices/
+
+# One Balaji invoice:
 python app.py --vendor balaji --pdf Invoice_23832_from_BALAJI_WHOLESALE_FOODS_LLC.pdf
+# Multiple Balaji invoices (only Balaji-format PDFs in this folder):
+python app.py --vendor balaji --pdf balaji-invoices/
+# For either vendor, you can also list PDFs explicitly (quote filenames with spaces):
+python app.py --vendor balaji --pdf "balaji-1.pdf" "balaji-2.pdf" "balaji-3.pdf" "balaji-4.pdf"
 ```
 
 Open <http://127.0.0.1:5000> and scan.
+The PDFs are indexed at startup; restart the app after adding or changing invoices.
+Matching barcodes can appear in more than one invoice; each result shows its source
+filename so you can tell them apart. Keep invoices of different vendors in separate
+folders and start one app per vendor.
 
 Options:
 
 | Flag / env var        | Default       | Purpose                        |
 | --------------------- | ------------- | ------------------------------ |
-| `--pdf` / `INVOICE_PDF` | `Laxmi1.pdf` | Invoice PDF to index           |
+| `--pdf` / `INVOICE_PDF` | `Laxmi1.pdf` | One or more PDFs, or a folder of vendor-specific PDFs (`INVOICE_PDF` accepts one path) |
 | `--vendor` / `INVOICE_VENDOR` | `hos` | Invoice layout: `hos` or `balaji` |
 | `--host` / `HOST`     | `127.0.0.1`   | Bind address                   |
 | `--port` / `PORT`     | `5000`        | Port                           |
