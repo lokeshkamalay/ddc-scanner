@@ -3,18 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Invoice Barcode Lookup</title>
+<title>Desi District Celina Invoice Validator</title>
 <style>
-  :root { color-scheme: light dark; --accent:#0b6bcb; --bg:#f4f6f9; --card:#fff; --muted:#5a6570; }
+  :root { color-scheme:light; --accent:#0b6bcb; --bg:#f4f6f9; --card:#fff; --muted:#5a6570; }
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:#15202b; }
   header { background:var(--accent); color:#fff; padding:16px 20px; }
-  header h1 { margin:0; font-size:20px; }
-  header p { margin:4px 0 0; font-size:13px; opacity:.85; }
+  .brand { display:flex; align-items:center; gap:16px; max-width:920px; margin:0 auto; }
+  .brand-logo { width:80px; height:80px; object-fit:contain; flex-shrink:0; }
+  .brand-copy { min-width:0; }
+  header h1 { margin:0; font-size:20px; overflow-wrap:anywhere; }
+  @media (max-width:600px) { .brand { gap:12px; } .brand-logo { width:60px; height:60px; } }
+  header p { margin:4px 0 0; font-size:13px; opacity:.85; overflow-wrap:anywhere; }
   main { max-width:960px; margin:0 auto; padding:20px; }
+  .upload { border-bottom:1px solid #cfd8e3; padding-bottom:20px; margin-bottom:20px; }
+  .upload h2 { font-size:18px; margin:0 0 12px; }
+  .upload-fields { display:grid; grid-template-columns:180px minmax(0,1fr) auto; align-items:end; gap:12px; }
+  .upload label { display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px; }
+  select, input[type=file] { width:100%; min-height:42px; padding:8px; border:1px solid #cfd8e3; border-radius:6px; background:#fff; color:#15202b; }
+  input[type=file] { min-width:0; }
+  button:disabled { opacity:.6; cursor:wait; }
+  #upload-status { font-size:14px; margin:10px 0 0; min-height:20px; overflow-wrap:anywhere; }
+  [hidden] { display:none !important; }
+  @media (max-width:600px) { .upload-fields { grid-template-columns:1fr; } }
   .scan { background:var(--card); border-radius:12px; padding:18px; box-shadow:0 2px 10px rgba(0,0,0,.08); }
   .scan label { display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:8px; }
-  #code { width:100%; font-size:26px; padding:14px 16px; border:2px solid #cfd8e3; border-radius:10px; letter-spacing:1px; }
+  #code { width:100%; font-size:26px; padding:14px 16px; border:2px solid #cfd8e3; border-radius:10px; letter-spacing:0; }
   #code:focus { outline:none; border-color:var(--accent); }
   .hint { font-size:12px; color:var(--muted); margin-top:8px; }
   #status { margin:16px 0 8px; font-size:14px; font-weight:600; min-height:20px; }
@@ -27,31 +41,108 @@
   .highlight span { display:block; color:var(--muted); font-size:12px; font-weight:600; }
   .highlight strong { display:block; color:#134b82; font-size:18px; overflow-wrap:anywhere; }
   @media (max-width:600px) { .highlights { grid-template-columns:1fr; } }
-  table { width:100%; border-collapse:collapse; font-size:14px; }
-  td { padding:6px 0; border-bottom:1px solid #eef1f5; vertical-align:top; }
+  table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:14px; }
+  td { padding:6px 0; border-bottom:1px solid #eef1f5; vertical-align:top; overflow-wrap:anywhere; }
   td.k { color:var(--muted); width:150px; font-weight:600; }
+  @media (max-width:600px) { td.k { width:110px; } }
   .err { color:#b3261e; }
   button { background:var(--accent); color:#fff; border:0; padding:10px 16px; border-radius:8px; font-size:14px; cursor:pointer; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Invoice Barcode Lookup</h1>
-  <p>{{ source }} &middot; {{ item_count }} line items loaded</p>
+  <div class="brand">
+    <img class="brand-logo" src="{{ url_for('brand_logo') }}" alt="Desi District logo" width="80" height="80">
+    <div class="brand-copy">
+      <h1>Desi District Celina Invoice Validator</h1>
+      <p id="batch-summary">{{ source }} &middot; {{ item_count }} line items loaded</p>
+    </div>
+  </div>
 </header>
 <main>
-  <section class="scan">
-    <label for="code">Scan barcode / type item number, item code or product name</label>
-    <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan now&hellip;" autofocus>
-    <div class="hint">The box stays focused automatically. Press <b>Enter</b> to search, <b>Esc</b> to clear.</div>
+  <section class="upload">
+    <h2>Invoice batch</h2>
+    <form id="upload-form" enctype="multipart/form-data">
+      <div class="upload-fields">
+        <div>
+          <label for="vendor">Vendor</label>
+          <select id="vendor" name="vendor" required>
+            <option value="hos">HOS / Laxmi</option>
+            <option value="balaji">Balaji</option>
+            <option value="champs">Champs</option>
+          </select>
+        </div>
+        <div>
+          <label for="attachments">PDF attachments</label>
+          <input id="attachments" name="files" type="file" accept=".pdf,application/pdf" multiple required>
+        </div>
+        <button id="load-button" type="submit">Load invoices</button>
+      </div>
+    </form>
+    <p id="upload-status" role="status" aria-live="polite"></p>
   </section>
-  <div id="status"></div>
+  <section id="scan-section" class="scan" {% if not item_count %}hidden{% endif %}>
+    <label for="code">Scan barcode / type item number, item code or product name</label>
+    <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan now&hellip;">
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
   <div id="results"></div>
 </main>
 <script>
 const input = document.getElementById('code');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
+const uploadForm = document.getElementById('upload-form');
+const uploadStatus = document.getElementById('upload-status');
+const loadButton = document.getElementById('load-button');
+const scanSection = document.getElementById('scan-section');
+const attachments = document.getElementById('attachments');
+const csrfToken = {{ csrf_token | tojson }};
+let searchVersion = 0;
+
+attachments.addEventListener('change', () => {
+  uploadStatus.className = '';
+  uploadStatus.textContent = Array.from(attachments.files).map(file => file.name).join(', ');
+});
+
+uploadForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!uploadForm.reportValidity()) return;
+  const files = Array.from(attachments.files);
+  if (files.length > 20 || files.reduce((total, file) => total + file.size, 0) > 49 * 1024 * 1024) {
+    uploadStatus.className = 'err';
+    uploadStatus.textContent = 'Select up to 20 PDFs, totaling less than 49 MB.';
+    return;
+  }
+  searchVersion += 1;
+  loadButton.disabled = true;
+  input.disabled = true;
+  loadButton.textContent = 'Processing...';
+  uploadStatus.className = '';
+  uploadStatus.textContent = 'Reading invoice PDFs...';
+  try {
+    const response = await fetch('/api/upload', {
+      method: 'POST', headers: {'X-CSRF-Token': csrfToken}, body: new FormData(uploadForm)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to load invoices.');
+    document.getElementById('batch-summary').textContent = `${data.source} \u00b7 ${data.items} line items loaded`;
+    uploadStatus.textContent = `${data.files} PDF${data.files === 1 ? '' : 's'} loaded. ${data.items} line items.`;
+    scanSection.hidden = false;
+    resultsEl.innerHTML = '';
+    statusEl.textContent = '';
+    input.value = '';
+    input.disabled = false;
+    input.focus();
+  } catch (error) {
+    uploadStatus.className = 'err';
+    uploadStatus.textContent = error.message || 'Upload failed. Try again.';
+  } finally {
+    loadButton.disabled = false;
+    loadButton.textContent = 'Load invoices';
+    input.disabled = false;
+  }
+});
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -100,11 +191,13 @@ function card(item, warn) {
 }
 
 async function search(code) {
+  const version = ++searchVersion;
   statusEl.textContent = 'Searching\u2026';
   resultsEl.innerHTML = '';
   try {
     const res = await fetch('/api/lookup?code=' + encodeURIComponent(code));
     const data = await res.json();
+    if (version !== searchVersion) return;
     if (!res.ok) { statusEl.innerHTML = `<span class="err">${esc(data.error || 'Search failed')}</span>`; return; }
     if (!data.count) {
       statusEl.innerHTML = `<span class="err">No match for "${esc(code)}"</span>`;
@@ -116,6 +209,7 @@ async function search(code) {
       : `${data.count} exact ${data.count === 1 ? 'match' : 'matches'} for ${code}`;
     resultsEl.innerHTML = data.results.map(i => card(i, warn)).join('');
   } catch (e) {
+    if (version !== searchVersion) return;
     statusEl.innerHTML = '<span class="err">Network error &mdash; is the server running?</span>';
   }
 }
@@ -127,15 +221,15 @@ input.addEventListener('keydown', (e) => {
     if (v) search(v);
     input.select();
   } else if (e.key === 'Escape') {
+    searchVersion += 1;
     input.value = '';
     statusEl.textContent = '';
     resultsEl.innerHTML = '';
   }
 });
 
-// Keep the scanner's keystrokes landing in the input at all times.
-document.addEventListener('click', () => input.focus());
-setInterval(() => { if (document.activeElement !== input) input.focus(); }, 1000);
+scanSection.addEventListener('click', () => { if (!input.disabled) input.focus(); });
+if (!scanSection.hidden) input.focus();
 </script>
 </body>
 </html>

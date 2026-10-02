@@ -14,6 +14,27 @@ pip install -r requirements.txt
 
 ## Run
 
+Start the server once (no PDFs or vendor flags needed):
+
+```bash
+python app.py
+```
+
+Open <http://127.0.0.1:5000>. Select HOS/Laxmi, Balaji, or Champs, choose one or
+more PDF attachments, and click **Load invoices**. The scanner appears when
+processing finishes. Upload a new batch from the same screen without restarting
+the server. All attachments in one batch must be from the selected vendor.
+
+Uploads are isolated by browser session. A new batch replaces only that browser's
+batch; matching items in different PDFs remain separate, with a source filename.
+Multiple tabs in the same browser share the batch. Uploaded files are removed
+after parsing; the index stays in server memory for up to 8 hours. At most 20
+uploaded batches are retained, so an older batch may be evicted. Re-upload after
+expiry, eviction, or a server restart. Limit: 20 PDFs per upload, less than 49 MB
+combined in the UI (50 MB total HTTP request limit).
+
+Optional: preload files using the existing command-line workflow:
+
 ```bash
 # One Laxmi/HOS invoice:
 python app.py --vendor hos --pdf Laxmi1.pdf
@@ -30,17 +51,16 @@ python app.py --vendor champs --pdf champs.pdf
 python app.py --vendor balaji --pdf "balaji-1.pdf" "balaji-2.pdf" "balaji-3.pdf" "balaji-4.pdf"
 ```
 
-Open <http://127.0.0.1:5000> and scan.
-The PDFs are indexed at startup; restart the app after adding or changing invoices.
+Command-line PDFs are indexed at startup; restart to pick up changes to those files.
 Matching barcodes can appear in more than one invoice; each result shows its source
-filename so you can tell them apart. Keep invoices of different vendors in separate
-folders and start one app per vendor.
+filename so you can tell them apart. Preloaded files are visible to any browser
+without an uploaded batch. Use UI-only startup for separate team uploads.
 
 Options:
 
 | Flag / env var        | Default       | Purpose                        |
 | --------------------- | ------------- | ------------------------------ |
-| `--pdf` / `INVOICE_PDF` | `Laxmi1.pdf` | One or more PDFs, or a folder of vendor-specific PDFs (`INVOICE_PDF` accepts one path) |
+| `--pdf` / `INVOICE_PDF` | None | Optional PDFs or a folder to preload (`INVOICE_PDF` accepts one path) |
 | `--vendor` / `INVOICE_VENDOR` | `hos` | Invoice layout: `hos`, `balaji` or `champs` |
 | `--host` / `HOST`     | `127.0.0.1`   | Bind address                   |
 | `--port` / `PORT`     | `5000`        | Port                           |
@@ -48,8 +68,8 @@ Options:
 ## How scanning works
 
 Most USB/Bluetooth barcode scanners are *keyboard wedge* devices: they type the
-code and press Enter. The search box keeps itself focused, so you just scan and
-the result appears. No driver or scanner configuration is needed.
+code and press Enter. The search box is focused after an upload, so you can scan
+immediately. Click the search box again after interacting with upload controls.
 
 - **Enter** &mdash; search (sent automatically by the scanner)
 - **Esc** &mdash; clear the box and results
@@ -73,6 +93,7 @@ shown once, using the later copy.
 | Endpoint             | Description                                              |
 | -------------------- | -------------------------------------------------------- |
 | `GET /`              | Scanner UI                                               |
+| `POST /api/upload`   | Multipart `vendor` + multiple `files`; requires the page's `X-CSRF-Token` and session cookie |
 | `GET /api/lookup?code=` | JSON lookup; `match_type` is `exact`, `text`, or `none` |
 | `GET /api/health`    | Readiness + number of indexed line items                 |
 
@@ -135,9 +156,12 @@ New invoice layouts require a sample PDF and a vendor-specific parser.
 
 ## Notes
 
-- The PDF is parsed once at startup and held in memory; lookups are O(1).
+- PDFs are parsed at startup or on upload; exact lookups use an in-memory index.
 - Bind to `127.0.0.1` (the default) unless you intend to expose the invoice data
   on your network. This app has no authentication, so do not run it on a public
   interface.
-- The bundled Flask server is a development server. For multi-user or
-  long-running use, put it behind a WSGI server such as gunicorn or waitress.
+- The bundled Flask server is a development server. For long-running shared use,
+  use a single-process WSGI server, with HTTPS and authentication added by your
+  administrator. The upload cache is process-local; multiple workers are not
+  supported without shared storage. Set `SECRET_KEY` in the environment for a
+  stable session signing key. Do not expose this unauthenticated app publicly.

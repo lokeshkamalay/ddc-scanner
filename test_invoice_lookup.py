@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from io import BytesIO
 
 import pytest
 
@@ -29,6 +30,17 @@ def make_item(**kw) -> LineItem:
     )
     defaults.update(kw)
     return LineItem(**defaults)
+
+
+def test_brand_banner_and_logo():
+    client = app_module.create_app().test_client()
+    response = client.get("/")
+    assert b"Desi District Celina Invoice Validator" in response.data
+    assert b'src="/brand-logo.jpg"' in response.data
+    logo = client.get("/brand-logo.jpg")
+    assert logo.status_code == 200
+    assert logo.mimetype == "image/jpeg"
+    assert logo.data == (Path(__file__).parent / "logo.jpg").read_bytes()
 
 
 class TestParsePackSize:
@@ -262,3 +274,114 @@ def test_champs_api_returns_full_line_without_price():
     assert response["results"][0]["raw_line"] == "21 Winco ALST-80 Stock Pot 2 0 2\nEach"
     assert response["results"][0]["pending"] == "2"
     assert response["results"][0]["source_pdf"] == "champs.pdf"
+
+
+@pytest.fixture
+def upload_client(monkeypatch):
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+    app_module.uploaded_indexes.clear()
+
+    def fake_index(paths, vendor):
+        items = []
+        for path in paths:
+            assert path.read_bytes().startswith(b"%PDF-")
+            items.append(make_item(item_code=vendor, source_pdf=path.name))
+        return InvoiceIndex(items, source=f"{len(items)} PDFs")
+
+    monkeypatch.setattr(app_module, "load_index", fake_index)
+    client = flask_app.test_client()
+    client.get("/")
+    yield client
+    app_module.uploaded_indexes.clear()
+
+
+def upload_headers(client):
+    with client.session_transaction() as browser_session:
+        return {"X-CSRF-Token": browser_session["csrf_token"]}
+
+
+def test_upload_multiple_pdfs_isolated_by_browser(upload_client):
+    response = upload_client.post("/api/upload", headers=upload_headers(upload_client), data={
+        "vendor": "balaji", "files": [(BytesIO(b"%PDF-test"), "one.pdf"), (BytesIO(b"%PDF-test"), "two.pdf")],
+    })
+    assert response.status_code == 200
+    assert response.get_json()["items"] == 2
+    assert upload_client.get("/api/lookup?code=723246111111").get_json()["count"] == 2
+    other = app_module.app.test_client()
+    assert other.get("/api/lookup?code=723246111111").status_code == 409
+    other.get("/")
+    other.post("/api/upload", headers=upload_headers(other), data={
+        "vendor": "champs", "files": (BytesIO(b"%PDF-test"), "champs.pdf"),
+    })
+    assert other.get("/api/lookup?code=champs").get_json()["count"] == 1
+    assert upload_client.get("/api/lookup?code=balaji").get_json()["count"] == 2
+
+
+@pytest.mark.parametrize("vendor,filename,contents", [
+    ("zeenat", "file.pdf", b"%PDF-test"),
+    ("hos", "file.txt", b"%PDF-test"),
+    ("hos", "file.pdf", b"not a PDF"),
+])
+def test_upload_rejects_invalid_input(upload_client, vendor, filename, contents):
+    response = upload_client.post("/api/upload", headers=upload_headers(upload_client), data={
+        "vendor": vendor, "files": (BytesIO(contents), filename),
+    })
+    assert response.status_code == 400
+
+
+def test_upload_requires_csrf_token(upload_client):
+    assert upload_client.post("/api/upload").status_code == 403
+
+
+def test_failed_upload_preserves_previous_batch(upload_client, monkeypatch):
+    headers = upload_headers(upload_client)
+    assert upload_client.post("/api/upload", headers=headers, data={
+        "vendor": "hos", "files": (BytesIO(b"%PDF-test"), "good.pdf"),
+    }).status_code == 200
+
+    def fail_parse(paths, vendor):
+        raise ValueError("bad PDF")
+
+    monkeypatch.setattr(app_module, "load_index", fail_parse)
+    assert upload_client.post("/api/upload", headers=headers, data={
+        "vendor": "hos", "files": (BytesIO(b"%PDF-test"), "bad.pdf"),
+    }).status_code == 422
+    assert upload_client.get("/api/lookup?code=hos").get_json()["count"] == 1
+
+
+def test_upload_limits_request_size(upload_client, monkeypatch):
+    monkeypatch.setitem(app_module.app.config, "MAX_CONTENT_LENGTH", 100)
+    response = upload_client.post("/api/upload", headers=upload_headers(upload_client), data={
+        "vendor": "hos", "files": (BytesIO(b"%PDF-" + b"0" * 200), "big.pdf"),
+    })
+    assert response.status_code == 413
+
+
+@pytest.mark.parametrize("vendor,path,code", [
+    ("hos", PDF, "723246293356"),
+    ("balaji", BALAJI_PDF, "8904147414275"),
+    ("champs", CHAMPS_PDF, "ALST-80"),
+])
+def test_real_pdf_upload_and_lookup(vendor, path, code):
+    if not path.is_file():
+        pytest.skip("sample PDF not available")
+    client = app_module.create_app().test_client()
+    client.get("/")
+    with path.open("rb") as attachment:
+        response = client.post("/api/upload", headers=upload_headers(client), data={
+            "vendor": vendor, "files": (attachment, path.name),
+        })
+    assert response.status_code == 200
+    assert response.get_json()["items"] > 0
+    lookup = client.get(f"/api/lookup?code={code}").get_json()
+    assert lookup["count"] >= 1
+    assert lookup["results"][0]["source_pdf"] == path.name
+
+
+def test_upload_missing_or_duplicate_files(upload_client):
+    headers = upload_headers(upload_client)
+    assert upload_client.post("/api/upload", headers=headers, data={"vendor": "hos"}).status_code == 400
+    assert upload_client.post("/api/upload", headers=headers, data={
+        "vendor": "hos", "files": [(BytesIO(b"%PDF-test"), "same.pdf"), (BytesIO(b"%PDF-test"), "same.pdf")],
+    }).status_code == 400
