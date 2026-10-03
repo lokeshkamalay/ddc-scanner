@@ -230,9 +230,13 @@ def _parse_page(page: Any, page_number: int) -> Iterator[LineItem]:
 def _parse_balaji_page(page: Any, page_number: int) -> Iterator[LineItem]:
     current: _Row | None = None
     in_table = False
+    barcode_start = 120.0
+    description_start = 248.0
     for line in _group_lines(page.extract_words()):
         words = [word["text"] for word in line]
         if "ACTIVITY" in words and "SKU/BARCODE" in words:
+            barcode_start = next(word["x0"] for word in line if word["text"] == "SKU/BARCODE") - 1.0
+            description_start = next(word["x0"] for word in line if word["text"] == "DESCRIPTION") - 1.0
             in_table = True
             continue
         if not in_table:
@@ -240,13 +244,13 @@ def _parse_balaji_page(page: Any, page_number: int) -> Iterator[LineItem]:
         if "Freight" in words or "TOTAL" in words or "PAYMENT" in words:
             break
 
-        activity = [word["text"] for word in line if 45 <= word["x0"] < 120]
+        activity = [word["text"] for word in line if 45 <= word["x0"] < barcode_start]
         code = activity[0] if activity else ""
         is_item = bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*\d+[A-Za-z0-9-]*", code))
         if is_item:
             if current is not None:
                 yield _finalize(current, "", "")
-            barcode_words = [word["text"] for word in line if 120 <= word["x0"] < 248]
+            barcode_words = [word["text"] for word in line if barcode_start <= word["x0"] < description_start]
             barcode = next((value for value in barcode_words if _DIGITS_RE.fullmatch(value)), "")
             quantity = [word["text"] for word in line if 437 <= word["x0"] < 475]
             rate = [word["text"] for word in line if 475 <= word["x0"] < 520]
@@ -261,7 +265,7 @@ def _parse_balaji_page(page: Any, page_number: int) -> Iterator[LineItem]:
                 amount=amount[0] if amount else "",
             )
         if current is not None:
-            description = " ".join(word["text"] for word in line if 248 <= word["x0"] < 437)
+            description = " ".join(word["text"] for word in line if description_start <= word["x0"] < 437)
             if description:
                 current.desc_parts.append(description)
 

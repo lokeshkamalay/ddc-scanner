@@ -189,6 +189,23 @@ def test_balaji_first_row():
     assert item.pack_size.text == "10 x 4 LB"
 
 
+def test_balaji_shifted_columns_preserve_moov():
+    from invoice_parser import load_index
+
+    samples = list((Path(__file__).parent / "balaji").glob("*23834*.pdf"))
+    if not samples:
+        pytest.skip("Balaji invoice 23834 not available")
+    index = load_index(samples[0], vendor="balaji")
+    for query in ("Moov", "moov", "MOOV"):
+        assert {item.item_code for item in index.search(query)} == {"mc030", "ms035"}
+    cream = index.lookup("8901177104008")[0]
+    assert cream.description == "Moov Massage Cream 12 * 30 gm"
+    assert (cream.shipped, cream.price, cream.amount) == ("2", "39.00", "78.00")
+    assert cream.pack_size.text == "12 x 30 GM"
+    spray = index.lookup("8901177100505")[0]
+    assert spray.description == "Moov Spray 12 * 35 gms"
+
+
 @pytest.mark.skipif(not BALAJI_PDF.is_file(), reason="Balaji sample invoice not available")
 def test_balaji_wrapped_rows_and_footer():
     from invoice_parser import load_index
